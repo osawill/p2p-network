@@ -40,13 +40,33 @@ ChatDialog::ChatDialog()
 
 void ChatDialog::gotReturnPressed()
 {
-	// Initially, just echo the string locally.
-	// Insert some networking code here...
-	qDebug() << "FIX: send message to other peers: " << textline->text();
+	emit writeMessage(textline->text);
+/*
+	
+	// Pack message
+	QMap<QString, QVariant> map;
+	map.insert("ChatText", textline->text());
+	
+	QByteArray body;
+	QDataStream out(&body, QIODevice::WriteOnly);
+	out << map;
+	
+	for (int p = myPortMin; p <= myPortMax; p++) {
+		udpSocket.writeDatagram(body, QHostAddress::LocalHost, p);
+	}
+	//
+	qDebug() << "Message sent: " << textline->text();
 	textview->append(textline->text());
+*/
 
 	// Clear the textline to get ready for the next input message.
 	textline->clear();
+}
+
+void ChatDialog::gotNewMessage(Qstring msg)
+{
+	qDebug() << "Message received:" << msg;
+	
 }
 
 NetSocket::NetSocket()
@@ -65,9 +85,11 @@ NetSocket::NetSocket()
 bool NetSocket::bind()
 {
 	// Try to bind to each of the range myPortMin..myPortMax in turn.
+	udpSocket = new QUdpSocket(this);
 	for (int p = myPortMin; p <= myPortMax; p++) {
-		if (QUdpSocket::bind(p)) {
+		if (udpSocket->bind(QHostAddress:LocalHost, p)) {//if (QUdpSocket::bind(p)) {
 			qDebug() << "bound to UDP port " << p;
+			connect(udpSocket, SIGNAL(readyRead()), this, SLOT(recMessage()));
 			return true;
 		}
 	}
@@ -76,6 +98,17 @@ bool NetSocket::bind()
 		<< "-" << myPortMax << " available";
 	return false;
 }
+
+void NetSocket::sendMessage(Qstring msg)
+{
+	return;
+}
+
+void NetSocket::recMessage()
+{
+	emit incomingMessage("hello");
+}
+
 
 int main(int argc, char **argv)
 {
@@ -90,6 +123,10 @@ int main(int argc, char **argv)
 	NetSocket sock;
 	if (!sock.bind())
 		exit(1);
+	//message UI -> sock
+	connect(&dialog, SIGNAL(writeMessage(Qstring)), &sock, SLOT(sendMessage(Qstring)));
+	//message sock ->UI
+	connect(&sock, SIGNAL(incomingMessage(Qstring)), &dialog, SLOT(gotNewMessage(Qstring)));
 
 	// Enter the Qt main loop; everything else is event driven
 	return app.exec();

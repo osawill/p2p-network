@@ -14,7 +14,11 @@ public:
 	ChatDialog();
 
 public slots:
-	void gotReturnPressed();
+	void gotReturnPressed(); //Text is entered
+	void gotNewMessage(Qstring msg);	//Display incoming message
+	
+signals:
+	void writeMessage(QString msg); //Signal new message needs to be sent
 
 private:
 	QTextEdit *textview;
@@ -30,9 +34,17 @@ public:
 
 	// Bind this socket to a P2Papp-specific default port.
 	bool bind();
+	
+public slots:
+	void sendMessage(Qstring msg); //Wait for meesage from UI
+	void recMessage(); //Wait for message from socket
+	
+signals:
+	void incomingMessage(QString msg);
 
 private:
 	int myPortMin, myPortMax;
+	QUdpSocket udpSocket;
 };
 
 #endif // P2PAPP_MAIN_HH
