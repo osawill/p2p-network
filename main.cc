@@ -40,17 +40,18 @@ ChatDialog::ChatDialog()
 
 void ChatDialog::gotReturnPressed()
 {
-	emit writeMessage(textline->text);
+	QString msg = textline->text();
+	emit writeMessage(msg);
 /*
-	
+
 	// Pack message
 	QMap<QString, QVariant> map;
 	map.insert("ChatText", textline->text());
-	
+
 	QByteArray body;
 	QDataStream out(&body, QIODevice::WriteOnly);
 	out << map;
-	
+
 	for (int p = myPortMin; p <= myPortMax; p++) {
 		udpSocket.writeDatagram(body, QHostAddress::LocalHost, p);
 	}
@@ -63,10 +64,10 @@ void ChatDialog::gotReturnPressed()
 	textline->clear();
 }
 
-void ChatDialog::gotNewMessage(Qstring msg)
+void ChatDialog::gotNewMessage(QString msg, QString user)
 {
-	qDebug() << "Message received:" << msg;
-	
+	qDebug() << user;
+	textview->append(msg);
 }
 
 NetSocket::NetSocket()
@@ -87,9 +88,12 @@ bool NetSocket::bind()
 	// Try to bind to each of the range myPortMin..myPortMax in turn.
 	udpSocket = new QUdpSocket(this);
 	for (int p = myPortMin; p <= myPortMax; p++) {
-		if (udpSocket->bind(QHostAddress:LocalHost, p)) {//if (QUdpSocket::bind(p)) {
+		if (udpSocket->bind(QHostAddress::LocalHost, p)) {//if (QUdpSocket::bind(p)) {
 			qDebug() << "bound to UDP port " << p;
 			connect(udpSocket, SIGNAL(readyRead()), this, SLOT(recMessage()));
+			//Assign default values
+			origin = QString::number((qrand() % 100) + 100);
+			seqNum = 0;
 			return true;
 		}
 	}
@@ -99,14 +103,46 @@ bool NetSocket::bind()
 	return false;
 }
 
-void NetSocket::sendMessage(Qstring msg)
+void NetSocket::sendMessage(QString msg)
 {
-	return;
+
+		// Pack message
+		QMap<QString, QVariant> map;
+		map.insert("ChatText", msg);
+		map.insert("Origin", origin);
+		map.insert("SeqNo", seqNum++); //increment after assigning
+
+		QByteArray body;
+		QDataStream out(&body, QIODevice::WriteOnly);
+		out << map;
+
+		for (int p = myPortMin; p <= myPortMax; p++) {
+			udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
+		}
+		//
+		qDebug() << "Message sent[me|" << seqNum - 1 << "]: " << msg;
+		emit messageSent(msg);
 }
 
 void NetSocket::recMessage()
 {
-	emit incomingMessage("hello");
+	QByteArray datagram;
+	// Empty out queue till the last message
+	do {
+	        datagram.resize(udpSocket->pendingDatagramSize());
+	        udpSocket->readDatagram(datagram.data(), datagram.size());
+	} while (udpSocket->hasPendingDatagrams());
+	// Receive into QMap
+	QMap<QString, QVariant> map;
+	QDataStream in(&datagram, QIODevice::ReadOnly);
+	in >> map;
+	//Decode QMap
+	QString msg = map.value("ChatText").toString();
+	QString user = map.value("Origin").toString();
+	int seq = map.value("SeqNo").toInt();
+
+	qDebug() << "Message received[" << user <<"|" << seq << "]: " << msg ;
+	emit incomingMessage(user, msg);
 }
 
 
@@ -124,11 +160,11 @@ int main(int argc, char **argv)
 	if (!sock.bind())
 		exit(1);
 	//message UI -> sock
-	connect(&dialog, SIGNAL(writeMessage(Qstring)), &sock, SLOT(sendMessage(Qstring)));
+	QObject::connect(&dialog, SIGNAL(writeMessage(QString)), &sock, SLOT(sendMessage(QString)));
 	//message sock ->UI
-	connect(&sock, SIGNAL(incomingMessage(Qstring)), &dialog, SLOT(gotNewMessage(Qstring)));
+	QObject::connect(&sock, SIGNAL(incomingMessage(QString, QString)), &dialog, SLOT(gotNewMessage(QString, QString)));
+	QObject::connect(&sock, SIGNAL(messageSent(QString)), &dialog, SLOT(gotNewMessage(QString)));
 
 	// Enter the Qt main loop; everything else is event driven
 	return app.exec();
 }
-

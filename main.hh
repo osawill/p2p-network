@@ -15,10 +15,10 @@ public:
 
 public slots:
 	void gotReturnPressed(); //Text is entered
-	void gotNewMessage(Qstring msg);	//Display incoming message
-	
+	void gotNewMessage(QString, QString user = "Me");	//Display incoming message
+
 signals:
-	void writeMessage(QString msg); //Signal new message needs to be sent
+	void writeMessage(QString); //Signal new message needs to be sent
 
 private:
 	QTextEdit *textview;
@@ -34,17 +34,20 @@ public:
 
 	// Bind this socket to a P2Papp-specific default port.
 	bool bind();
-	
+
 public slots:
-	void sendMessage(Qstring msg); //Wait for meesage from UI
+	void sendMessage(QString); //Wait for meesage from UI
 	void recMessage(); //Wait for message from socket
-	
+
 signals:
-	void incomingMessage(QString msg);
+	void incomingMessage(QString, QString);
+	void messageSent(QString);
 
 private:
 	int myPortMin, myPortMax;
-	QUdpSocket udpSocket;
+	QUdpSocket * udpSocket;
+	int seqNum;
+	QString origin;
 };
 
 #endif // P2PAPP_MAIN_HH
