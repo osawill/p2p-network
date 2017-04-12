@@ -66,7 +66,8 @@ void ChatDialog::gotReturnPressed()
 
 void ChatDialog::gotNewMessage(QString msg, QString user)
 {
-	textview->append(msg);
+	QString newMsg = "[" + user + "]: " + msg;
+	textview->append(newMsg);
 }
 
 NetSocket::NetSocket()
@@ -127,7 +128,7 @@ void NetSocket::sendMessage(QString msg)
 			udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
 		}
 		//
-		qDebug() << "Message sent[Me|" << seqNum - 1 << "]: " << msg;
+		qDebug() << QString("SENT[Me|" + QString::number(seqNum - 1) + "]: " + msg).toStdString().c_str();
 		emit messageSent(msg);
 }
 
@@ -145,28 +146,28 @@ void NetSocket::recMessage()
 		in >> map;
 
 		//Decode QMap
-		if(map.contains("Want")) { //Status message
+		/*if(map.contains("Want")) { //Status message
 			QMap<QString, QVariant> want = map.value("Want");
 
 			bool goodStatus = true;
 			for (qmap_it iter = want.begin(); iter != want.end(); iter++) {
 				QString origin = iter.key();
-				quint32 seqNo = iter.value().toUInt();
+				quint32 lastNum = iter.value().toUInt();
 				if (!msgLog->contains(origin)) {
 					qDebug() << "New node discovered! Adding to log";
 					msgLog->insert(origin, new QVector<QByteArray>);
 					sendStatusMessage(address, port);
 					goodStatus = false;
 					break;
-				} else if ((quint32)msgLog->value(origin)->count() < seqNo) {
+				} else if ((quint32)msgLog->value(origin)->count() < lastNum) {
 					qDebug() << "My messages from " << origin << " are outdated";
 					sendStatusMessage(address, port);
 					goodStatus = false;
 					break;
-				} else if ((quint32)msgLog->value(origin)->count() > seqNo) {
+				} else if ((quint32)msgLog->value(origin)->count() > lastNum) {
 					qDebug() << "Status Sender has outdated messages from " << origin;
 					QVector<QByteArray> * originMsgs = msgLog->value(origin);
-					udpSendToRandomNeighbor(originMsgs->at(seqNo), true);
+					udpSendToRandomNeighbor(originMsgs->at(lastNum), true);
 					goodStatus = false;
 					break;
 				}
@@ -183,18 +184,25 @@ void NetSocket::recMessage()
 				printMsgLogCounts();
 			}
 		}
-		else { //Chat message
+		else {*/ //Chat message
 			QString msg = map.value("ChatText").toString();
 			QString user = map.value("Origin").toString();
 			quint32 seq = map.value("SeqNo").toInt();
-			qDebug() << "Message received[" << user <<"|" << seq << "]: " << msg ;
+			qDebug() << QString("REC [" + user + "|" + QString::number(seq ) + "]: " + msg).toStdString().c_str();
 
 			if (!(msgLog->contains(user))) //New user
 				msgLog->insert(origin, new QVector<QByteArray>(0));
-
-			msgLog->value(user)->append(datagram);
-			emit incomingMessage(msg, user);
-		}
+			
+			QVector<QByteArray> * userLog = msgLog->value(user);
+			// Check age of message
+			if (userLog->count() == seq){ // Next message we're expecting
+				msgLog->value(user)->append(datagram);
+				emit incomingMessage(msg, user);
+			}
+			else if (userLog->count() < seq) {//We're outdate, get new messages
+				return;
+			}
+		//}
 	} //endWhile
 }
 
@@ -210,9 +218,9 @@ void NetSocket::sendStatus()
 
 	QByteArray body;
 	QDataStream out(&body, QIODevice::WriteOnly);
-	out << map;
+	out << want;
 	//Send out
-	udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
+	udpSocket->writeDatagram(body, QHostAddress::LocalHost, 100);
 	qDebug() << "Status sent";
 }
 
