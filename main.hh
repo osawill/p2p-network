@@ -6,6 +6,9 @@
 #include <QLineEdit>
 #include <QUdpSocket>
 
+typedef QMap<QString, QVariant>::iterator qmap_it;
+typedef QMap<QString, QVector<QByteArray>*>::iterator msglog_it;
+
 class ChatDialog : public QDialog
 {
 	Q_OBJECT
@@ -38,6 +41,7 @@ public:
 public slots:
 	void sendMessage(QString); //Wait for meesage from UI
 	void recMessage(); //Wait for message from socket
+	void sendStatus(); // Update others of status
 
 signals:
 	void incomingMessage(QString, QString);
@@ -46,8 +50,9 @@ signals:
 private:
 	int myPortMin, myPortMax;
 	QUdpSocket * udpSocket;
-	int seqNum;
+	qint32 seqNum;
 	QString origin;
+	QMap<QString, QVector<QByteArray> *> *msgLog; // History of messages
 };
 
 #endif // P2PAPP_MAIN_HH

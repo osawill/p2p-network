@@ -1,2 +1,3 @@
 *.o
 p2papp
+moc_main*

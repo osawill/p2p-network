@@ -40,8 +40,8 @@ ChatDialog::ChatDialog()
 
 void ChatDialog::gotReturnPressed()
 {
-	QString msg = textline->text();
-	emit writeMessage(msg);
+	// QString msg = textline->text();
+	emit writeMessage(textline->text());
 /*
 
 	// Pack message
@@ -66,7 +66,6 @@ void ChatDialog::gotReturnPressed()
 
 void ChatDialog::gotNewMessage(QString msg, QString user)
 {
-	qDebug() << user;
 	textview->append(msg);
 }
 
@@ -94,6 +93,7 @@ bool NetSocket::bind()
 			//Assign default values
 			origin = QString::number((qrand() % 100) + 100);
 			seqNum = 0;
+			msgLog = new QMap<QString, QVector<QByteArray> *>();
 			return true;
 		}
 	}
@@ -116,11 +116,18 @@ void NetSocket::sendMessage(QString msg)
 		QDataStream out(&body, QIODevice::WriteOnly);
 		out << map;
 
+		// Add message to log
+		if (!(msgLog->contains(origin))) //New user
+			msgLog->insert(origin, new QVector<QByteArray>(0));
+
+		msgLog->value(origin)->append(body);
+
+		// Send out
 		for (int p = myPortMin; p <= myPortMax; p++) {
 			udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
 		}
 		//
-		qDebug() << "Message sent[me|" << seqNum - 1 << "]: " << msg;
+		qDebug() << "Message sent[Me|" << seqNum - 1 << "]: " << msg;
 		emit messageSent(msg);
 }
 
@@ -128,21 +135,85 @@ void NetSocket::recMessage()
 {
 	QByteArray datagram;
 	// Empty out queue till the last message
-	do {
-	        datagram.resize(udpSocket->pendingDatagramSize());
-	        udpSocket->readDatagram(datagram.data(), datagram.size());
-	} while (udpSocket->hasPendingDatagrams());
-	// Receive into QMap
-	QMap<QString, QVariant> map;
-	QDataStream in(&datagram, QIODevice::ReadOnly);
-	in >> map;
-	//Decode QMap
-	QString msg = map.value("ChatText").toString();
-	QString user = map.value("Origin").toString();
-	int seq = map.value("SeqNo").toInt();
+	while (udpSocket->hasPendingDatagrams()) {
+		datagram.resize(udpSocket->pendingDatagramSize());
+		udpSocket->readDatagram(datagram.data(), datagram.size());
 
-	qDebug() << "Message received[" << user <<"|" << seq << "]: " << msg ;
-	emit incomingMessage(user, msg);
+		// Receive into QMap
+		QMap<QString, QVariant> map;
+		QDataStream in(&datagram, QIODevice::ReadOnly);
+		in >> map;
+
+		//Decode QMap
+		if(map.contains("Want")) { //Status message
+			QMap<QString, QVariant> want = map.value("Want");
+
+			bool goodStatus = true;
+			for (qmap_it iter = want.begin(); iter != want.end(); iter++) {
+				QString origin = iter.key();
+				quint32 seqNo = iter.value().toUInt();
+				if (!msgLog->contains(origin)) {
+					qDebug() << "New node discovered! Adding to log";
+					msgLog->insert(origin, new QVector<QByteArray>);
+					sendStatusMessage(address, port);
+					goodStatus = false;
+					break;
+				} else if ((quint32)msgLog->value(origin)->count() < seqNo) {
+					qDebug() << "My messages from " << origin << " are outdated";
+					sendStatusMessage(address, port);
+					goodStatus = false;
+					break;
+				} else if ((quint32)msgLog->value(origin)->count() > seqNo) {
+					qDebug() << "Status Sender has outdated messages from " << origin;
+					QVector<QByteArray> * originMsgs = msgLog->value(origin);
+					udpSendToRandomNeighbor(originMsgs->at(seqNo), true);
+					goodStatus = false;
+					break;
+				}
+			}
+
+			if (goodStatus) {
+				qDebug() << "Status looks good!";
+				if (qrand() % 2 == 0) {
+					qDebug() << "Rumormongering with random peer";
+					int i = qrand() % numNeighbors;
+					sendStatusMessage(QHostAddress::LocalHost, neighbors[i]);
+				}
+				qDebug() << "Rumormongering over";
+				printMsgLogCounts();
+			}
+		}
+		else { //Chat message
+			QString msg = map.value("ChatText").toString();
+			QString user = map.value("Origin").toString();
+			quint32 seq = map.value("SeqNo").toInt();
+			qDebug() << "Message received[" << user <<"|" << seq << "]: " << msg ;
+
+			if (!(msgLog->contains(user))) //New user
+				msgLog->insert(origin, new QVector<QByteArray>(0));
+
+			msgLog->value(user)->append(datagram);
+			emit incomingMessage(msg, user);
+		}
+	} //endWhile
+}
+
+void NetSocket::sendStatus()
+{
+	QMap<QString, QVariant> want;
+	for (msglog_it iter = msgLog->begin(); iter != msgLog->end(); iter++) {
+		want.insert(iter.key(), QVariant(iter.value()->count()));
+	}
+
+	QMap<QString, QVariant> status;
+	status.insert("Want", QVariant(want));
+
+	QByteArray body;
+	QDataStream out(&body, QIODevice::WriteOnly);
+	out << map;
+	//Send out
+	udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
+	qDebug() << "Status sent";
 }
 
 
