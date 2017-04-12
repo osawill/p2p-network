@@ -41,17 +41,24 @@ public:
 public slots:
 	void sendMessage(QString); //Wait for meesage from UI
 	void recMessage(); //Wait for message from socket
-	void sendStatus(); // Update others of status
+	void timeOut(); // Timeout response
+	void sendStatusRandom();
+
 
 signals:
 	void incomingMessage(QString, QString);
 	void messageSent(QString);
 
 private:
-	int myPortMin, myPortMax;
+	int neighbors[2];
+	void sendMsgNbr(QByteArray, int);
+	void sendMsgRandom(QByteArray);
+	void sendStatus(int); // Update others of status
+	int myPortMin, myPortMax, numNeighbors;
 	QUdpSocket * udpSocket;
 	qint32 seqNum;
 	QString origin;
+	QTimer timer, aeTimer;
 	QMap<QString, QVector<QByteArray> *> *msgLog; // History of messages
 };
 

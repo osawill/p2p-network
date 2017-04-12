@@ -90,11 +90,24 @@ bool NetSocket::bind()
 	for (int p = myPortMin; p <= myPortMax; p++) {
 		if (udpSocket->bind(QHostAddress::LocalHost, p)) {//if (QUdpSocket::bind(p)) {
 			qDebug() << "bound to UDP port " << p;
+			//Assign neighbors
+			if( p == myPortMax || p == myPortMin) {
+				numNeighbors = 1;
+				neighbors[0] = 1;
+			} else {
+				numNeighbors = 2;
+				neighbors[0] = p - 1;
+				neighbors[1] = p + 1;
+			}
 			connect(udpSocket, SIGNAL(readyRead()), this, SLOT(recMessage()));
 			//Assign default values
 			origin = QString::number((qrand() % 100) + 100);
 			seqNum = 0;
 			msgLog = new QMap<QString, QVector<QByteArray> *>();
+			// timer = new QTimer(this);
+			// aeTimer = new QTimer(this);
+			connect(&timer, SIGNAL(timeout()), this, SLOT(timeOut()));
+			connect(&aeTimer, SIGNAL(timeout()), this, SLOT(sendStatusRandom()));
 			return true;
 		}
 	}
@@ -124,21 +137,37 @@ void NetSocket::sendMessage(QString msg)
 		msgLog->value(origin)->append(body);
 
 		// Send out
-		for (int p = myPortMin; p <= myPortMax; p++) {
-			udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
-		}
+		sendMsgRandom(body);
+
 		//
 		qDebug() << QString("SENT[Me|" + QString::number(seqNum - 1) + "]: " + msg).toStdString().c_str();
 		emit messageSent(msg);
 }
 
+void sendMsgRandom(QByteArray datagram)
+{
+	int i = qrand() % numNeighbors;
+
+	sendMsgNbr(datagram, neighbors[i]);
+}
+
+void sendMsgNbr (QByteArray body, int p)
+{
+	udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
+
+	//Timer
+	timer->start(2000);
+}
+
 void NetSocket::recMessage()
 {
 	QByteArray datagram;
+	QHostAddress userHost;
+	quint16 userPort;
 	// Empty out queue till the last message
 	while (udpSocket->hasPendingDatagrams()) {
 		datagram.resize(udpSocket->pendingDatagramSize());
-		udpSocket->readDatagram(datagram.data(), datagram.size());
+		udpSocket->readDatagram(datagram.data(), datagram.size(), &userHost, &userPort);
 
 		// Receive into QMap
 		QMap<QString, QVariant> map;
@@ -146,45 +175,36 @@ void NetSocket::recMessage()
 		in >> map;
 
 		//Decode QMap
-		/*if(map.contains("Want")) { //Status message
+		if(map.contains("Want")) { //Status message
+			timer->stop(); //Ack response
+			qDebug("REC status message");
 			QMap<QString, QVariant> want = map.value("Want");
 
-			bool goodStatus = true;
 			for (qmap_it iter = want.begin(); iter != want.end(); iter++) {
 				QString origin = iter.key();
-				quint32 lastNum = iter.value().toUInt();
+				int lastNum = iter.value().toInt();
 				if (!msgLog->contains(origin)) {
-					qDebug() << "New node discovered! Adding to log";
+					qDebug("New Node: %s", origin);
 					msgLog->insert(origin, new QVector<QByteArray>);
-					sendStatusMessage(address, port);
-					goodStatus = false;
-					break;
-				} else if ((quint32)msgLog->value(origin)->count() < lastNum) {
-					qDebug() << "My messages from " << origin << " are outdated";
-					sendStatusMessage(address, port);
-					goodStatus = false;
-					break;
-				} else if ((quint32)msgLog->value(origin)->count() > lastNum) {
-					qDebug() << "Status Sender has outdated messages from " << origin;
-					QVector<QByteArray> * originMsgs = msgLog->value(origin);
-					udpSendToRandomNeighbor(originMsgs->at(lastNum), true);
-					goodStatus = false;
-					break;
+					sendStatus(port);
+					return;
+				} else if (msgLog->value(origin)->count() < lastNum) {
+					qDebug("Outdate messages for %s", origin);
+					sendStatus(port);
+					return;
+				} else if ((msgLog->value(origin)->count() > lastNum) {
+					qDebug("Updating outdated message for %s", origin);
+					QVector<QByteArray> * updatedMsg = msgLog->value(origin);
+					sendMsgNbr(updatedMsg->at(lastNum), userPort)
+					return;
 				}
 			}
 
-			if (goodStatus) {
-				qDebug() << "Status looks good!";
-				if (qrand() % 2 == 0) {
-					qDebug() << "Rumormongering with random peer";
-					int i = qrand() % numNeighbors;
-					sendStatusMessage(QHostAddress::LocalHost, neighbors[i]);
-				}
-				qDebug() << "Rumormongering over";
-				printMsgLogCounts();
+				qDebug("Status is up-to-date");
+				sendStatusRandom();
 			}
 		}
-		else {*/ //Chat message
+		else { //Chat message
 			QString msg = map.value("ChatText").toString();
 			QString user = map.value("Origin").toString();
 			quint32 seq = map.value("SeqNo").toInt();
@@ -192,21 +212,22 @@ void NetSocket::recMessage()
 
 			if (!(msgLog->contains(user))) //New user
 				msgLog->insert(origin, new QVector<QByteArray>(0));
-			
+
 			QVector<QByteArray> * userLog = msgLog->value(user);
 			// Check age of message
-			if (userLog->count() == seq){ // Next message we're expecting
+			if (userLog->count() == (int) seq){ // Next message we're expecting
 				msgLog->value(user)->append(datagram);
 				emit incomingMessage(msg, user);
+
+				sendMsgRandom();
 			}
-			else if (userLog->count() < seq) {//We're outdate, get new messages
-				return;
-			}
-		//}
+			// Send status as ack
+			sendStatus(userPort);
+		}
 	} //endWhile
 }
 
-void NetSocket::sendStatus()
+void NetSocket::sendStatus(int p)
 {
 	QMap<QString, QVariant> want;
 	for (msglog_it iter = msgLog->begin(); iter != msgLog->end(); iter++) {
@@ -220,8 +241,20 @@ void NetSocket::sendStatus()
 	QDataStream out(&body, QIODevice::WriteOnly);
 	out << want;
 	//Send out
-	udpSocket->writeDatagram(body, QHostAddress::LocalHost, 100);
-	qDebug() << "Status sent";
+	udpSocket->writeDatagram(body, QHostAddress::LocalHost, p);
+	qDebug("Status sent to p%d", p)
+}
+
+void NetSocket::sendStatusRandom()
+{
+	int i = qrand() % numNeighbors;
+
+	sendStatus(neighbors[i]);
+}
+
+void NetSocket::timeOut()
+{
+	qDebug("Timeout sending messsage");
 }
 
 
@@ -239,7 +272,7 @@ int main(int argc, char **argv)
 	if (!sock.bind())
 		exit(1);
 	//message UI -> sock
-	QObject::connect(&dialog, SIGNAL(writeMessage(QString)), &sock, SLOT(sendMessage(QString)));
+	QObject::connect(&dialog, SIGNAL(writeMessage(QString)), &sock, SLOT(sendMsgRandom(QString)));
 	//message sock ->UI
 	QObject::connect(&sock, SIGNAL(incomingMessage(QString, QString)), &dialog, SLOT(gotNewMessage(QString, QString)));
 	QObject::connect(&sock, SIGNAL(messageSent(QString)), &dialog, SLOT(gotNewMessage(QString)));
